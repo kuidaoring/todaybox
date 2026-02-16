@@ -144,7 +144,7 @@ app.get(
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Hono Todo</title>
+        <title>todaybox</title>
         <link rel="stylesheet" href="/assets/tailwind.css" />
       </head>
       <body className="antialiased">
@@ -165,7 +165,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
   return c.render(
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-8">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Hono Todo</h1>
+        <h1 className="text-2xl font-semibold">todaybox</h1>
         <p className="text-sm">今日のタスクや締切を簡単に管理できます。</p>
       </header>
       <nav className="flex flex-wrap items-center gap-3 text-sm">

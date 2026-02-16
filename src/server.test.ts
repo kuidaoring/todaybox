@@ -137,7 +137,7 @@ describe('app', () => {
     const res = await app.request('http://localhost/?filter=today&sort=due')
     expect(res.status).toBe(200)
     const body = await res.text()
-    expect(body).toContain('Hono Todo')
+    expect(body).toContain('todaybox')
     expect(body).toContain('filter=today')
     expect(body).toContain('sort=due')
   })

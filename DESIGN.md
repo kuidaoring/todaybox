@@ -1,4 +1,4 @@
-# Hono + Electron Todo (Minimal)
+# todaybox (Hono + Electron, Minimal)
 
 ## 前提
 - Electron がローカルで Hono サーバを起動し、`BrowserWindow` から `http://localhost` を表示する。

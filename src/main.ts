@@ -3,12 +3,12 @@ import {
   BrowserWindow,
   Menu,
   Tray,
-  nativeImage,
-  type MenuItemConstructorOptions
+  nativeImage
 } from 'electron'
 import { serve } from '@hono/node-server'
 import { app, subscribeTodosChanged, type TodayTasksPayload } from './server.js'
 import { buildTrayMenuModel } from './tray-menu.js'
+import { createMenuTemplate } from './menu-template.js'
 
 const port = 8787
 let mainWindow: BrowserWindow | null = null
@@ -49,55 +49,6 @@ const fetchTodayTasksPayload = async (): Promise<TodayTasksPayload> => {
   return (await response.json()) as TodayTasksPayload
 }
 
-const toMenuTemplate = (model: ReturnType<typeof buildTrayMenuModel>) => {
-  const template: MenuItemConstructorOptions[] = []
-  for (const entry of model) {
-    if (entry.kind === 'separator') {
-      template.push({ type: 'separator' })
-      continue
-    }
-    if (entry.kind === 'task') {
-      const primary: MenuItemConstructorOptions = {
-        type: 'checkbox',
-        checked: entry.completed,
-        label: entry.label,
-        sublabel: entry.sublabel,
-        click: () => focusWindowWithSelectedTodo(entry.todoId)
-      }
-      template.push(primary)
-      continue
-    }
-    if (entry.kind === 'open') {
-      template.push({
-        label: entry.label,
-        click: () => focusWindowWithSelectedTodo()
-      })
-      continue
-    }
-    if (entry.kind === 'refresh') {
-      template.push({
-        label: entry.label,
-        click: () => {
-          void rebuildTrayMenu()
-        }
-      })
-      continue
-    }
-    if (entry.kind === 'quit') {
-      template.push({
-        label: entry.label,
-        click: () => electronApp.quit()
-      })
-      continue
-    }
-    template.push({
-      label: entry.label,
-      enabled: false
-    })
-  }
-  return template
-}
-
 const rebuildTrayMenu = async () => {
   if (!tray) {
     return
@@ -107,12 +58,32 @@ const rebuildTrayMenu = async () => {
     const payload = await fetchTodayTasksPayload()
     const model = buildTrayMenuModel(payload)
     tray.setTitle(`todaybox ${payload.count}`)
-    tray.setContextMenu(Menu.buildFromTemplate(toMenuTemplate(model)))
+    tray.setContextMenu(
+      Menu.buildFromTemplate(
+        createMenuTemplate(model, {
+          onOpen: focusWindowWithSelectedTodo,
+          onRefresh: () => {
+            void rebuildTrayMenu()
+          },
+          onQuit: () => electronApp.quit()
+        })
+      )
+    )
   } catch (error) {
     console.error(error)
     const model = buildTrayMenuModel(undefined, { error: true })
     tray.setTitle('todaybox')
-    tray.setContextMenu(Menu.buildFromTemplate(toMenuTemplate(model)))
+    tray.setContextMenu(
+      Menu.buildFromTemplate(
+        createMenuTemplate(model, {
+          onOpen: focusWindowWithSelectedTodo,
+          onRefresh: () => {
+            void rebuildTrayMenu()
+          },
+          onQuit: () => electronApp.quit()
+        })
+      )
+    )
   }
 }
 

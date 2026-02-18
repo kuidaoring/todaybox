@@ -200,4 +200,44 @@ describe('app', () => {
     expect(body).toHaveProperty('items')
     expect(Array.isArray(body.items)).toBe(true)
   })
+
+  it('renders selected todo detail inline without right-side detail section', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const selectedMatch = listBody.match(/selected=([^"&]+)/)
+    expect(selectedMatch).not.toBeNull()
+    const selectedId = selectedMatch?.[1] ?? ''
+
+    const res = await app.request(`http://localhost/?selected=${selectedId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('閉じる')
+    expect(body).not.toContain('<h2 class="text-lg font-semibold">詳細</h2>')
+  })
+
+  it('auto-opens completed section when selected todo is completed', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const completedSelectedMatch = listBody.match(/selected=([^"&]+)[^"]*">\s*<span class="line-through/)
+    expect(completedSelectedMatch).not.toBeNull()
+    const completedId = completedSelectedMatch?.[1] ?? ''
+
+    const res = await app.request(`http://localhost/?selected=${completedId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toMatch(/<details class="space-y-2" open(?:="")?>/)
+  })
+
+  it('does not auto-open completed section when selected todo is incomplete', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const incompleteSelectedMatch = listBody.match(/selected=([^"&]+)[^"]*"><span class="">/)
+    expect(incompleteSelectedMatch).not.toBeNull()
+    const incompleteId = incompleteSelectedMatch?.[1] ?? ''
+
+    const res = await app.request(`http://localhost/?selected=${incompleteId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).not.toMatch(/<details class="space-y-2" open(?:="")?>/)
+  })
 })

@@ -202,7 +202,49 @@ app.get('/', zValidator('query', querySchema), (c) => {
   const filtered = filterTodosByToday(sorted, filter)
   const { incomplete: incompleteTodos, completed: completedTodos } =
     splitTodosByCompletion(filtered)
-  const selectedTodo = selected ? todos.find((t) => t.id === selected) : undefined
+  const shouldOpenCompletedSection = completedTodos.some((todo) => todo.id === selected)
+  const renderInlineDetails = (todo: Todo) => (
+    <div className="ml-7 space-y-1 rounded border border-zinc-300 p-3 text-sm">
+      <div className="flex justify-end">
+        <a href={buildPathWithQuery('/', c.req.url, { filter, selected: '', sort })} className="text-sm">
+          閉じる
+        </a>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>締切:</span>
+        <form
+          method="post"
+          action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, sharedQuery)}
+          className="inline-flex items-center gap-2"
+        >
+          <input type="date" name="dueDate" value={formatPlainDateInput(todo.dueDate)} />
+          <button type="submit">{todo.dueDate ? '締切を更新' : '締切を設定'}</button>
+        </form>
+        {todo.dueDate ? (
+          <form
+            method="post"
+            action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, sharedQuery)}
+            className="inline"
+          >
+            <input type="hidden" name="dueDate" value="" />
+            <button type="submit">クリア</button>
+          </form>
+        ) : null}
+      </div>
+      <form
+        method="post"
+        action={buildPathWithQuery(`/todos/${todo.id}/delete`, c.req.url, sharedQuery)}
+        className="inline"
+      >
+        <button type="submit">削除</button>
+      </form>
+      <div>
+        <p>メモ:</p>
+        <pre className="whitespace-pre-wrap">{todo.memo || 'なし'}</pre>
+      </div>
+      <p>作成: {formatInstantLabel(todo.createdAt)}</p>
+    </div>
+  )
   return c.render(
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-8">
       <header className="space-y-2">
@@ -276,7 +318,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
         <input type="hidden" name="sort" value={sort} />
         <button type="submit">追加</button>
       </form>
-      <div className={selectedTodo ? 'grid gap-6 md:grid-cols-2' : 'grid gap-6'}>
+      <div className="grid gap-6">
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">一覧</h2>
           {filtered.length ? (
@@ -288,65 +330,68 @@ app.get('/', zValidator('query', querySchema), (c) => {
                 {incompleteTodos.length ? (
                   <ul className="space-y-2">
                     {incompleteTodos.map((todo) => (
-                      <li className="flex flex-wrap items-center gap-2 text-sm">
-                        <form
-                          method="post"
-                          action={buildPathWithQuery(
-                            `/todos/${todo.id}/toggle`,
-                            c.req.url,
-                            sharedQuery
-                          )}
-                          className="inline"
-                        >
-                          <button
-                            type="submit"
-                            aria-label="完了にする"
-                            aria-pressed="false"
-                            className="inline-flex h-5 w-5 items-center justify-center rounded border border-zinc-400 bg-white text-transparent text-[11px] leading-none transition-colors hover:border-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+                      <li className="space-y-2 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <form
+                            method="post"
+                            action={buildPathWithQuery(
+                              `/todos/${todo.id}/toggle`,
+                              c.req.url,
+                              sharedQuery
+                            )}
+                            className="inline"
                           >
-                            ✓
-                          </button>
-                        </form>
-                        <a
-                          href={buildPathWithQuery('/', c.req.url, {
-                            filter,
-                            selected: todo.id,
-                            sort
-                          })}
-                        >
-                          <span className={todo.id === selected ? 'font-bold' : ''}>
-                            {todo.title}
-                          </span>
-                        </a>
-                        {todo.dueDate ? (
-                          <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
-                        ) : null}
-                        {todo.memo ? (
-                          <small className="text-xs">📝 メモ</small>
-                        ) : null}
-                        <form
-                          method="post"
-                          action={buildPathWithQuery(
-                            `/todos/${todo.id}/today`,
-                            c.req.url,
-                            sharedQuery
-                          )}
-                          className="inline"
-                        >
-                          <button
-                            type="submit"
-                            aria-label={todo.isToday ? '今日解除' : '今日にする'}
-                            aria-pressed={todo.isToday ? 'true' : 'false'}
-                            className={[
-                              'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                              todo.isToday
-                                ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
-                                : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
-                            ].join(' ')}
+                            <button
+                              type="submit"
+                              aria-label="完了にする"
+                              aria-pressed="false"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded border border-zinc-400 bg-white text-transparent text-[11px] leading-none transition-colors hover:border-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+                            >
+                              ✓
+                            </button>
+                          </form>
+                          <a
+                            href={buildPathWithQuery('/', c.req.url, {
+                              filter,
+                              selected: todo.id,
+                              sort
+                            })}
                           >
-                            📍
-                          </button>
-                        </form>
+                            <span className={todo.id === selected ? 'font-bold' : ''}>
+                              {todo.title}
+                            </span>
+                          </a>
+                          {todo.dueDate ? (
+                            <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
+                          ) : null}
+                          {todo.memo ? (
+                            <small className="text-xs">📝 メモ</small>
+                          ) : null}
+                          <form
+                            method="post"
+                            action={buildPathWithQuery(
+                              `/todos/${todo.id}/today`,
+                              c.req.url,
+                              sharedQuery
+                            )}
+                            className="inline"
+                          >
+                            <button
+                              type="submit"
+                              aria-label={todo.isToday ? '今日解除' : '今日にする'}
+                              aria-pressed={todo.isToday ? 'true' : 'false'}
+                              className={[
+                                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                                todo.isToday
+                                  ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
+                                  : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
+                              ].join(' ')}
+                            >
+                              📍
+                            </button>
+                          </form>
+                        </div>
+                        {todo.id === selected ? renderInlineDetails(todo) : null}
                       </li>
                     ))}
                   </ul>
@@ -354,79 +399,82 @@ app.get('/', zValidator('query', querySchema), (c) => {
                   <p className="text-sm">未完了のタスクはありません。</p>
                 )}
               </div>
-              <details className="space-y-2">
+              <details className="space-y-2" open={shouldOpenCompletedSection ? true : undefined}>
                 <summary className="cursor-pointer text-base font-semibold">
                   {formatCountLabel('完了', completedTodos.length)}
                 </summary>
                 {completedTodos.length ? (
                   <ul className="space-y-2">
                     {completedTodos.map((todo) => (
-                      <li className="flex flex-wrap items-center gap-2 text-sm">
-                        <form
-                          method="post"
-                          action={buildPathWithQuery(
-                            `/todos/${todo.id}/toggle`,
-                            c.req.url,
-                            sharedQuery
-                          )}
-                          className="inline"
-                        >
-                          <button
-                            type="submit"
-                            aria-label="未完了に戻す"
-                            aria-pressed="true"
-                            className="inline-flex h-5 w-5 items-center justify-center rounded border border-emerald-600 bg-emerald-600 text-white text-[11px] leading-none transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+                      <li className="space-y-2 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <form
+                            method="post"
+                            action={buildPathWithQuery(
+                              `/todos/${todo.id}/toggle`,
+                              c.req.url,
+                              sharedQuery
+                            )}
+                            className="inline"
                           >
-                            ✓
-                          </button>
-                        </form>
-                        <a
-                          href={buildPathWithQuery('/', c.req.url, {
-                            filter,
-                            selected: todo.id,
-                            sort
-                          })}
-                        >
-                          <span
-                            className={[
-                              'line-through',
-                              todo.id === selected ? 'font-bold' : ''
-                            ]
-                              .filter(Boolean)
-                              .join(' ')}
+                            <button
+                              type="submit"
+                              aria-label="未完了に戻す"
+                              aria-pressed="true"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded border border-emerald-600 bg-emerald-600 text-white text-[11px] leading-none transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+                            >
+                              ✓
+                            </button>
+                          </form>
+                          <a
+                            href={buildPathWithQuery('/', c.req.url, {
+                              filter,
+                              selected: todo.id,
+                              sort
+                            })}
                           >
-                            {todo.title}
-                          </span>
-                        </a>
-                        {todo.dueDate ? (
-                          <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
-                        ) : null}
-                        {todo.memo ? (
-                          <small className="text-xs">📝 メモ</small>
-                        ) : null}
-                        <form
-                          method="post"
-                          action={buildPathWithQuery(
-                            `/todos/${todo.id}/today`,
-                            c.req.url,
-                            sharedQuery
-                          )}
-                          className="inline"
-                        >
-                          <button
-                            type="submit"
-                            aria-label={todo.isToday ? '今日解除' : '今日にする'}
-                            aria-pressed={todo.isToday ? 'true' : 'false'}
-                            className={[
-                              'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                              todo.isToday
-                                ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
-                                : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
-                            ].join(' ')}
+                            <span
+                              className={[
+                                'line-through',
+                                todo.id === selected ? 'font-bold' : ''
+                              ]
+                                .filter(Boolean)
+                                .join(' ')}
+                            >
+                              {todo.title}
+                            </span>
+                          </a>
+                          {todo.dueDate ? (
+                            <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
+                          ) : null}
+                          {todo.memo ? (
+                            <small className="text-xs">📝 メモ</small>
+                          ) : null}
+                          <form
+                            method="post"
+                            action={buildPathWithQuery(
+                              `/todos/${todo.id}/today`,
+                              c.req.url,
+                              sharedQuery
+                            )}
+                            className="inline"
                           >
-                            📍
-                          </button>
-                        </form>
+                            <button
+                              type="submit"
+                              aria-label={todo.isToday ? '今日解除' : '今日にする'}
+                              aria-pressed={todo.isToday ? 'true' : 'false'}
+                              className={[
+                                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                                todo.isToday
+                                  ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
+                                  : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
+                              ].join(' ')}
+                            >
+                              📍
+                            </button>
+                          </form>
+                        </div>
+                        {todo.id === selected ? renderInlineDetails(todo) : null}
                       </li>
                     ))}
                   </ul>
@@ -439,59 +487,6 @@ app.get('/', zValidator('query', querySchema), (c) => {
             <p className="text-sm">タスクがありません。</p>
           )}
         </section>
-        {selectedTodo ? (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">詳細</h2>
-                <a
-                  href={buildPathWithQuery('/', c.req.url, { filter, selected: '', sort })}
-                  className="text-sm"
-                >
-                閉じる
-              </a>
-            </div>
-            <div className="space-y-1 text-sm">
-              <p>タイトル: {selectedTodo.title}</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <span>締切:</span>
-                <form
-                  method="post"
-                  action={buildPathWithQuery(`/todos/${selectedTodo.id}/due`, c.req.url, sharedQuery)}
-                  className="inline-flex items-center gap-2"
-                >
-                  <input type="date" name="dueDate" value={formatPlainDateInput(selectedTodo.dueDate)} />
-                  <button type="submit">
-                    {selectedTodo.dueDate ? '締切を更新' : '締切を設定'}
-                  </button>
-                </form>
-                {selectedTodo.dueDate ? (
-                  <form
-                    method="post"
-                    action={buildPathWithQuery(`/todos/${selectedTodo.id}/due`, c.req.url, sharedQuery)}
-                    className="inline"
-                  >
-                    <input type="hidden" name="dueDate" value="" />
-                    <button type="submit">クリア</button>
-                  </form>
-                ) : null}
-              </div>
-              <p>今日: {selectedTodo.isToday ? 'はい' : 'いいえ'}</p>
-              <p>完了: {selectedTodo.completed ? 'はい' : 'いいえ'}</p>
-              <form
-                method="post"
-                action={buildPathWithQuery(`/todos/${selectedTodo.id}/delete`, c.req.url, sharedQuery)}
-                className="inline"
-              >
-                <button type="submit">削除</button>
-              </form>
-              <div>
-                <p>メモ:</p>
-                <pre className="whitespace-pre-wrap">{selectedTodo.memo || 'なし'}</pre>
-              </div>
-              <p>作成: {formatInstantLabel(selectedTodo.createdAt)}</p>
-            </div>
-          </section>
-        ) : null}
       </div>
     </main>
   )

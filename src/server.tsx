@@ -4,6 +4,7 @@ import { jsxRenderer } from 'hono/jsx-renderer'
 import { zValidator } from '@hono/zod-validator'
 import { Temporal } from '@js-temporal/polyfill'
 import { createTodoFormSchema, dueDateFormSchema, querySchema } from './validation.js'
+import { formatDueDateLabel } from './date-format.js'
 
 export const app = new Hono()
 
@@ -17,27 +18,63 @@ export type Todo = {
   memo?: string
 }
 
+export type TodayTaskItem = {
+  id: string
+  title: string
+  completed: boolean
+  dueDateIso?: string
+}
+
+export type TodayTasksPayload = {
+  count: number
+  items: TodayTaskItem[]
+  updatedAt: string
+}
+
 const todos: Todo[] = []
 const now = Temporal.Now.instant()
 const toUtcPlainDate = (value: Temporal.Instant) => value.toZonedDateTimeISO('UTC').toPlainDate()
 const formatPlainDateInput = (value: Temporal.PlainDate | undefined) => value?.toString() ?? ''
 const formatInstantLabel = (value: Temporal.Instant) =>
   new Date(Number(value.epochMilliseconds)).toLocaleString()
+const todosChangedListeners = new Set<() => void>()
+export { formatDueDateLabel } from './date-format.js'
 
-export const formatDueDateLabel = (
-  value: Temporal.PlainDate,
+const notifyTodosChanged = () => {
+  for (const listener of todosChangedListeners) {
+    listener()
+  }
+}
+
+export const subscribeTodosChanged = (listener: () => void) => {
+  todosChangedListeners.add(listener)
+  return () => {
+    todosChangedListeners.delete(listener)
+  }
+}
+
+export const getTodayTodosForMenu = (items: Todo[]) => {
+  const todayTodos = items.filter((todo) => todo.isToday)
+  const incomplete = todayTodos.filter((todo) => !todo.completed)
+  const completed = todayTodos.filter((todo) => todo.completed)
+  return [...incomplete, ...completed]
+}
+
+export const buildTodayTasksPayload = (
+  items: Todo[],
   today: Temporal.PlainDate = Temporal.Now.plainDateISO()
-) => {
-  if (Temporal.PlainDate.compare(value, today) === 0) {
-    return '今日'
+): TodayTasksPayload => {
+  const todayTodos = getTodayTodosForMenu(items)
+  return {
+    count: todayTodos.length,
+    items: todayTodos.map((todo) => ({
+      id: todo.id,
+      title: todo.title,
+      completed: todo.completed,
+      dueDateIso: todo.dueDate?.toString()
+    })),
+    updatedAt: new Date().toISOString()
   }
-  if (Temporal.PlainDate.compare(value, today.add({ days: 1 })) === 0) {
-    return '明日'
-  }
-  if (value.year === today.year) {
-    return `${value.month}/${value.day}`
-  }
-  return `${value.year}/${value.month}/${value.day}`
 }
 
 // Seed data for local testing.
@@ -136,6 +173,10 @@ app.use(
     rewriteRequestPath: (path) => path.replace(/^\/assets/, '')
   })
 )
+
+app.get('/api/today', (c) => {
+  return c.json(buildTodayTasksPayload(todos))
+})
 
 app.get(
   '*',
@@ -471,6 +512,7 @@ app.post('/todos', zValidator('form', createTodoFormSchema), (c) => {
       isToday,
       memo: memo || undefined
     })
+    notifyTodosChanged()
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
 })
@@ -481,6 +523,7 @@ app.post('/todos/:id/toggle', zValidator('query', querySchema), (c) => {
   const todo = todos.find((t) => t.id === id)
   if (todo) {
     todo.completed = !todo.completed
+    notifyTodosChanged()
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
 })
@@ -491,6 +534,7 @@ app.post('/todos/:id/today', zValidator('query', querySchema), (c) => {
   const todo = todos.find((t) => t.id === id)
   if (todo) {
     todo.isToday = !todo.isToday
+    notifyTodosChanged()
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
 })
@@ -506,6 +550,7 @@ app.post(
     if (todo) {
       const body = c.req.valid('form')
       todo.dueDate = body.dueDate
+      notifyTodosChanged()
     }
     return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
   }
@@ -518,6 +563,7 @@ app.post('/todos/:id/delete', zValidator('query', querySchema), (c) => {
   const index = todos.findIndex((t) => t.id === id)
   if (index !== -1) {
     todos.splice(index, 1)
+    notifyTodosChanged()
     if (selected === id) {
       selected = ''
     }

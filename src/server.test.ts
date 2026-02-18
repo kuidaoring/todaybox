@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { Temporal } from '@js-temporal/polyfill'
 import {
   app,
+  buildTodayTasksPayload,
   formatDueDateLabel,
   formatCountLabel,
   filterTodosByToday,
+  getTodayTodosForMenu,
   sortTodos,
   splitTodosByCompletion,
   toDueTimestamp,
@@ -132,6 +134,53 @@ describe('filterTodosByToday', () => {
   })
 })
 
+describe('getTodayTodosForMenu', () => {
+  it('returns only today todos with incomplete first', () => {
+    const todos: Todo[] = [
+      { id: '1', title: 'a', completed: true, createdAt: instant(1), isToday: true },
+      { id: '2', title: 'b', completed: false, createdAt: instant(2), isToday: true },
+      { id: '3', title: 'c', completed: false, createdAt: instant(3), isToday: false }
+    ]
+
+    const result = getTodayTodosForMenu(todos)
+
+    expect(result.map((todo) => todo.id)).toEqual(['2', '1'])
+  })
+})
+
+describe('buildTodayTasksPayload', () => {
+  it('builds payload with due dates and all today todos', () => {
+    const today = plainDate('2026-02-16')
+    const todos: Todo[] = [
+      {
+        id: '1',
+        title: 'buy',
+        completed: false,
+        createdAt: instant(1),
+        dueDate: plainDate('2026-02-16'),
+        isToday: true
+      },
+      {
+        id: '2',
+        title: 'done',
+        completed: true,
+        createdAt: instant(2),
+        dueDate: plainDate('2026-02-17'),
+        isToday: true
+      }
+    ]
+
+    const payload = buildTodayTasksPayload(todos, today)
+
+    expect(payload.count).toBe(2)
+    expect(payload.items).toEqual([
+      { id: '1', title: 'buy', completed: false, dueDateIso: '2026-02-16' },
+      { id: '2', title: 'done', completed: true, dueDateIso: '2026-02-17' }
+    ])
+    expect(typeof payload.updatedAt).toBe('string')
+  })
+})
+
 describe('app', () => {
   it('renders the main page with query state', async () => {
     const res = await app.request('http://localhost/?filter=today&sort=due')
@@ -140,5 +189,15 @@ describe('app', () => {
     expect(body).toContain('todaybox')
     expect(body).toContain('filter=today')
     expect(body).toContain('sort=due')
+  })
+
+  it('returns today tasks payload as json', async () => {
+    const res = await app.request('http://localhost/api/today')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    const body = await res.json()
+    expect(body).toHaveProperty('count')
+    expect(body).toHaveProperty('items')
+    expect(Array.isArray(body.items)).toBe(true)
   })
 })

@@ -3,10 +3,14 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { jsxRenderer } from 'hono/jsx-renderer'
 import { zValidator } from '@hono/zod-validator'
 import { Temporal } from '@js-temporal/polyfill'
-import { createTodoFormSchema, dueDateFormSchema, querySchema } from './validation.js'
+import { createTodoFormSchema, dueDateFormSchema, querySchema, recurrenceFormSchema } from './validation.js'
 import { formatCompletedAtLabel, formatDueDateLabel } from './date-format.js'
 
 export const app = new Hono()
+
+export type RecurrenceSetting =
+  | { type: 'weekly'; weekdays: number[] }
+  | { type: 'monthly'; dayOfMonth: number }
 
 export type Todo = {
   id: string
@@ -14,6 +18,8 @@ export type Todo = {
   completed: boolean
   createdAt: Temporal.Instant
   completedAt?: Temporal.Instant
+  recurrence?: RecurrenceSetting
+  hasGeneratedNextOccurrence?: boolean
   dueDate?: Temporal.PlainDate
   isToday?: boolean
   memo?: string
@@ -24,6 +30,7 @@ export type TodayTaskItem = {
   title: string
   completed: boolean
   dueDateIso?: string
+  hasRecurrence: boolean
 }
 
 export type TodayTasksPayload = {
@@ -45,8 +52,6 @@ const toLocalNoonInstant = (date: Temporal.PlainDate) =>
     .toInstant()
 const toUtcPlainDate = (value: Temporal.Instant) => value.toZonedDateTimeISO('UTC').toPlainDate()
 const formatPlainDateInput = (value: Temporal.PlainDate | undefined) => value?.toString() ?? ''
-const formatInstantLabel = (value: Temporal.Instant) =>
-  new Date(Number(value.epochMilliseconds)).toLocaleString()
 const todosChangedListeners = new Set<() => void>()
 export { formatDueDateLabel } from './date-format.js'
 
@@ -54,6 +59,111 @@ const notifyTodosChanged = () => {
   for (const listener of todosChangedListeners) {
     listener()
   }
+}
+
+const recurrenceWeekdayLabels = [
+  { value: 0, label: '日' },
+  { value: 1, label: '月' },
+  { value: 2, label: '火' },
+  { value: 3, label: '水' },
+  { value: 4, label: '木' },
+  { value: 5, label: '金' },
+  { value: 6, label: '土' }
+] as const
+
+export const buildRecurrenceSetting = (
+  form: {
+    recurrenceType: 'none' | 'weekly' | 'monthly'
+    weeklyWeekdays: number[]
+    monthlyDay?: number
+  }
+): RecurrenceSetting | undefined => {
+  if (form.recurrenceType === 'weekly' && form.weeklyWeekdays.length > 0) {
+    return { type: 'weekly', weekdays: form.weeklyWeekdays }
+  }
+  if (form.recurrenceType === 'monthly' && form.monthlyDay) {
+    return { type: 'monthly', dayOfMonth: form.monthlyDay }
+  }
+  return undefined
+}
+
+export const resolveMonthlyDay = (year: number, month: number, dayOfMonth: number) => {
+  const yearMonth = Temporal.PlainYearMonth.from({ year, month })
+  return Math.min(dayOfMonth, yearMonth.daysInMonth)
+}
+
+export const calculateNextDueDateFromRecurrence = (
+  recurrence: RecurrenceSetting,
+  baseDate: Temporal.PlainDate
+) => {
+  const base = baseDate
+  if (recurrence.type === 'weekly') {
+    const currentWeekday = base.dayOfWeek % 7
+    const offsets = recurrence.weekdays
+      .map((weekday) => {
+        const diff = (weekday - currentWeekday + 7) % 7
+        return diff === 0 ? 7 : diff
+      })
+      .sort((a, b) => a - b)
+    const nextOffset = offsets[0]
+    if (nextOffset === undefined) {
+      return undefined
+    }
+    return base.add({ days: nextOffset })
+  }
+
+  const thisMonthDay = resolveMonthlyDay(base.year, base.month, recurrence.dayOfMonth)
+  let candidate = Temporal.PlainDate.from({
+    year: base.year,
+    month: base.month,
+    day: thisMonthDay
+  })
+  if (Temporal.PlainDate.compare(candidate, base) <= 0) {
+    const nextMonth = base.add({ months: 1 })
+    const nextMonthDay = resolveMonthlyDay(nextMonth.year, nextMonth.month, recurrence.dayOfMonth)
+    candidate = Temporal.PlainDate.from({
+      year: nextMonth.year,
+      month: nextMonth.month,
+      day: nextMonthDay
+    })
+  }
+  return candidate
+}
+
+export const completeTodoAndMaybeGenerateNext = (
+  todo: Todo,
+  completedAt: Temporal.Instant = Temporal.Now.instant(),
+  baseDate: Temporal.PlainDate = todo.dueDate ??
+    todo.createdAt.toZonedDateTimeISO(Temporal.Now.timeZoneId()).toPlainDate(),
+  createId: (createdAt: Temporal.Instant) => string = (createdAt) =>
+    `${Number(createdAt.epochMilliseconds)}-${Math.random().toString(36).slice(2, 8)}`
+) => {
+  todo.completed = true
+  todo.completedAt = completedAt
+
+  if (!todo.recurrence || todo.hasGeneratedNextOccurrence) {
+    return undefined
+  }
+
+  const nextDueDate = calculateNextDueDateFromRecurrence(todo.recurrence, baseDate)
+  if (!nextDueDate) {
+    return undefined
+  }
+
+  const createdAt = Temporal.Now.instant()
+  const nextTodo: Todo = {
+    id: createId(createdAt),
+    title: todo.title,
+    completed: false,
+    createdAt,
+    recurrence: todo.recurrence,
+    hasGeneratedNextOccurrence: false,
+    dueDate: nextDueDate,
+    isToday: false,
+    memo: todo.memo
+  }
+  todo.hasGeneratedNextOccurrence = true
+  return nextTodo
 }
 
 export const subscribeTodosChanged = (listener: () => void) => {
@@ -81,7 +191,8 @@ export const buildTodayTasksPayload = (
       id: todo.id,
       title: todo.title,
       completed: todo.completed,
-      dueDateIso: todo.dueDate?.toString()
+      dueDateIso: todo.dueDate?.toString(),
+      hasRecurrence: Boolean(todo.recurrence)
     })),
     updatedAt: new Date().toISOString()
   }
@@ -260,6 +371,80 @@ app.get('/', zValidator('query', querySchema), (c) => {
       </div>
       <form
         method="post"
+        action={buildPathWithQuery(`/todos/${todo.id}/recurrence`, c.req.url, sharedQuery)}
+        className="space-y-2"
+      >
+        <fieldset className="flex flex-col gap-2 border border-zinc-300 p-2">
+          <legend>繰り返し設定</legend>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-1">
+              <input
+                type="radio"
+                name="recurrenceType"
+                value="none"
+                checked={todo.recurrence ? undefined : true}
+              />
+              なし
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <input
+                type="radio"
+                name="recurrenceType"
+                value="weekly"
+                checked={todo.recurrence?.type === 'weekly' ? true : undefined}
+              />
+              週次
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <input
+                type="radio"
+                name="recurrenceType"
+                value="monthly"
+                checked={todo.recurrence?.type === 'monthly' ? true : undefined}
+              />
+              月次
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span>週次曜日:</span>
+            {recurrenceWeekdayLabels.map((day) => (
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  name="weeklyWeekdays"
+                  value={String(day.value)}
+                  checked={
+                    todo.recurrence?.type === 'weekly' && todo.recurrence.weekdays.includes(day.value)
+                      ? true
+                      : undefined
+                  }
+                />
+                {day.label}
+              </label>
+            ))}
+          </div>
+          <label className="inline-flex items-center gap-2">
+            <span>月次日付:</span>
+            <select name="monthlyDay" className="w-24">
+              <option value="">未設定</option>
+              {Array.from({ length: 31 }, (_, index) => {
+                const day = index + 1
+                return (
+                  <option
+                    value={String(day)}
+                    selected={todo.recurrence?.type === 'monthly' && todo.recurrence.dayOfMonth === day}
+                  >
+                    {day}日
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+        </fieldset>
+        <button type="submit">繰り返しを更新</button>
+      </form>
+      <form
+        method="post"
         action={buildPathWithQuery(`/todos/${todo.id}/delete`, c.req.url, sharedQuery)}
         className="inline"
       >
@@ -272,7 +457,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
         <pre className="whitespace-pre-wrap">{todo.memo || 'なし'}</pre>
       </div>
       {todo.completedAt ? <p>完了: {formatCompletedAtLabel(todo.completedAt)}</p> : null}
-      <p>作成: {formatInstantLabel(todo.createdAt)}</p>
+      <p>作成: {formatCompletedAtLabel(todo.createdAt)}</p>
     </div>
   )
   return c.render(
@@ -343,6 +528,45 @@ app.get('/', zValidator('query', querySchema), (c) => {
           <span>メモ</span>
           <textarea name="memo" rows={3} placeholder="補足メモ" className="w-full"></textarea>
         </label>
+        <fieldset className="flex w-full flex-col gap-2 border border-zinc-300 p-3">
+          <legend>繰り返し</legend>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-1">
+              <input type="radio" name="recurrenceType" value="none" checked />
+              なし
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <input type="radio" name="recurrenceType" value="weekly" />
+              週次
+            </label>
+            <label className="inline-flex items-center gap-1">
+              <input type="radio" name="recurrenceType" value="monthly" />
+              月次
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span>週次曜日:</span>
+            {recurrenceWeekdayLabels.map((day) => (
+              <label className="inline-flex items-center gap-1">
+                <input type="checkbox" name="weeklyWeekdays" value={String(day.value)} />
+                {day.label}
+              </label>
+            ))}
+          </div>
+          <label className="inline-flex items-center gap-2">
+            <span>月次日付:</span>
+            <select name="monthlyDay" className="w-24">
+              <option value="">未設定</option>
+              {Array.from({ length: 31 }, (_, index) => {
+                const day = index + 1
+                return <option value={String(day)}>{day}日</option>
+              })}
+            </select>
+          </label>
+          <p className="text-xs text-zinc-600">
+            週次と月次は排他です。完了時に次回タスクを1件生成します。
+          </p>
+        </fieldset>
         {filter ? <input type="hidden" name="filter" value={filter} /> : null}
         {selected ? <input type="hidden" name="selected" value={selected} /> : null}
         <input type="hidden" name="sort" value={sort} />
@@ -394,6 +618,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
                           {todo.dueDate ? (
                             <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
                           ) : null}
+                          {todo.recurrence ? <small className="text-xs">🔄 繰り返し</small> : null}
                           {todo.memo ? (
                             <small className="text-xs">📝 メモ</small>
                           ) : null}
@@ -480,6 +705,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
                           {todo.dueDate ? (
                             <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
                           ) : null}
+                          {todo.recurrence ? <small className="text-xs">🔄 繰り返し</small> : null}
                           {todo.memo ? (
                             <small className="text-xs">📝 メモ</small>
                           ) : null}
@@ -530,8 +756,23 @@ app.get('/', zValidator('query', querySchema), (c) => {
 
 app.post('/todos', zValidator('form', createTodoFormSchema), (c) => {
   const body = c.req.valid('form')
-  const { title, dueDate, memo, filter, selected, sort } = body
+  const {
+    title,
+    dueDate,
+    memo,
+    recurrenceType,
+    weeklyWeekdays,
+    monthlyDay,
+    filter,
+    selected,
+    sort
+  } = body
   const isToday = body.isToday || filter === 'today'
+  const recurrence = buildRecurrenceSetting({
+    recurrenceType,
+    weeklyWeekdays,
+    monthlyDay
+  })
   if (title) {
     const createdAt = Temporal.Now.instant()
     todos.push({
@@ -539,6 +780,8 @@ app.post('/todos', zValidator('form', createTodoFormSchema), (c) => {
       title,
       completed: false,
       createdAt,
+      recurrence,
+      hasGeneratedNextOccurrence: false,
       dueDate,
       isToday,
       memo: memo || undefined
@@ -554,7 +797,17 @@ app.post('/todos/:id/toggle', zValidator('query', querySchema), (c) => {
   const todo = todos.find((t) => t.id === id)
   if (todo) {
     todo.completed = !todo.completed
-    todo.completedAt = todo.completed ? Temporal.Now.instant() : undefined
+    if (todo.completed) {
+      const recurrenceBaseDate =
+        todo.dueDate ??
+        todo.createdAt.toZonedDateTimeISO(Temporal.Now.timeZoneId()).toPlainDate()
+      const nextTodo = completeTodoAndMaybeGenerateNext(todo, Temporal.Now.instant(), recurrenceBaseDate)
+      if (nextTodo) {
+        todos.push(nextTodo)
+      }
+    } else {
+      todo.completedAt = undefined
+    }
     notifyTodosChanged()
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
@@ -570,6 +823,35 @@ app.post('/todos/:id/today', zValidator('query', querySchema), (c) => {
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
 })
+
+app.post(
+  '/todos/:id/recurrence',
+  zValidator('query', querySchema),
+  zValidator('form', recurrenceFormSchema),
+  (c) => {
+    const id = c.req.param('id')
+    const { filter, selected, sort } = c.req.valid('query')
+    const todo = todos.find((t) => t.id === id)
+    if (todo) {
+      const body = c.req.valid('form')
+      const recurrence = buildRecurrenceSetting({
+        recurrenceType: body.recurrenceType,
+        weeklyWeekdays: body.weeklyWeekdays,
+        monthlyDay: body.monthlyDay
+      })
+      const oldRecurrence = JSON.stringify(todo.recurrence ?? null)
+      const newRecurrence = JSON.stringify(recurrence ?? null)
+      todo.recurrence = recurrence
+      if (!recurrence) {
+        todo.hasGeneratedNextOccurrence = undefined
+      } else if (oldRecurrence !== newRecurrence) {
+        todo.hasGeneratedNextOccurrence = false
+      }
+      notifyTodosChanged()
+    }
+    return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))
+  }
+)
 
 app.post(
   '/todos/:id/due',

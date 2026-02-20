@@ -30,6 +30,33 @@ const memoSchema = z.string().trim().transform((value) => value.slice(0, 2000)).
 const titleSchema = z.string().trim().default('').catch('')
 
 const isTodaySchema = z.literal('on').transform(() => true).default(false).catch(false)
+const recurrenceTypeSchema = z.enum(['none', 'weekly', 'monthly']).default('none').catch('none')
+
+const weeklyWeekdaysSchema = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((value) => {
+    const raw = value === undefined ? [] : Array.isArray(value) ? value : [value]
+    const weekdays = raw
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6)
+    return [...new Set(weekdays)].sort((a, b) => a - b)
+  })
+
+const monthlyDaySchema = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => {
+    if (!value) {
+      return undefined
+    }
+    const parsed = Number(value)
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) {
+      return undefined
+    }
+    return parsed
+  })
 
 export const querySchema = z.object({
   filter: filterSchema,
@@ -42,9 +69,18 @@ export const createTodoFormSchema = z.object({
   dueDate: dueDateSchema,
   memo: memoSchema,
   isToday: isTodaySchema,
+  recurrenceType: recurrenceTypeSchema,
+  weeklyWeekdays: weeklyWeekdaysSchema,
+  monthlyDay: monthlyDaySchema,
   filter: filterSchema,
   selected: selectedSchema,
   sort: sortSchema
+})
+
+export const recurrenceFormSchema = z.object({
+  recurrenceType: recurrenceTypeSchema,
+  weeklyWeekdays: weeklyWeekdaysSchema,
+  monthlyDay: monthlyDaySchema
 })
 
 export const dueDateFormSchema = z.object({

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { Temporal } from '@js-temporal/polyfill'
 import {
   app,
+  buildRecurrenceSetting,
   buildTodayTasksPayload,
+  calculateNextDueDateFromRecurrence,
+  completeTodoAndMaybeGenerateNext,
   formatDueDateLabel,
   formatCountLabel,
   filterTodosByToday,
@@ -117,6 +120,134 @@ describe('sortCompletedTodosByRecent', () => {
   })
 })
 
+describe('buildRecurrenceSetting', () => {
+  it('builds weekly recurrence from weekdays', () => {
+    expect(
+      buildRecurrenceSetting({
+        recurrenceType: 'weekly',
+        weeklyWeekdays: [1, 3, 5],
+        monthlyDay: undefined
+      })
+    ).toEqual({ type: 'weekly', weekdays: [1, 3, 5] })
+  })
+
+  it('builds monthly recurrence from day', () => {
+    expect(
+      buildRecurrenceSetting({
+        recurrenceType: 'monthly',
+        weeklyWeekdays: [],
+        monthlyDay: 31
+      })
+    ).toEqual({ type: 'monthly', dayOfMonth: 31 })
+  })
+
+  it('returns undefined when recurrence is invalid', () => {
+    expect(
+      buildRecurrenceSetting({
+        recurrenceType: 'weekly',
+        weeklyWeekdays: [],
+        monthlyDay: undefined
+      })
+    ).toBeUndefined()
+  })
+})
+
+describe('calculateNextDueDateFromRecurrence', () => {
+  it('calculates next weekly due date from multiple weekdays', () => {
+    const completedAt = Temporal.Instant.from('2026-02-16T10:00:00Z') // Mon
+    const baseDate = Temporal.PlainDate.from('2026-02-16')
+    const result = calculateNextDueDateFromRecurrence(
+      { type: 'weekly', weekdays: [1, 3, 5] },
+      baseDate
+    )
+    expect(result?.toString()).toBe('2026-02-18') // Wed
+  })
+
+  it('shifts monthly day to month-end when day does not exist', () => {
+    const completedAt = Temporal.Instant.from('2026-03-31T10:00:00Z')
+    const baseDate = Temporal.PlainDate.from('2026-03-31')
+    const result = calculateNextDueDateFromRecurrence(
+      { type: 'monthly', dayOfMonth: 31 },
+      baseDate
+    )
+    expect(result?.toString()).toBe('2026-04-30')
+  })
+})
+
+describe('completeTodoAndMaybeGenerateNext', () => {
+  it('generates only once even after reopen and complete again', () => {
+    const base: Todo = {
+      id: 'base',
+      title: 'task',
+      completed: false,
+      createdAt: instant(1),
+      recurrence: { type: 'weekly', weekdays: [1] },
+      hasGeneratedNextOccurrence: false
+    }
+
+    const firstGenerated = completeTodoAndMaybeGenerateNext(
+      base,
+      Temporal.Instant.from('2026-02-16T10:00:00Z'),
+      Temporal.PlainDate.from('2026-02-16'),
+      () => 'next-1'
+    )
+    expect(firstGenerated?.id).toBe('next-1')
+    expect(base.hasGeneratedNextOccurrence).toBe(true)
+
+    // reopen
+    base.completed = false
+    base.completedAt = undefined
+
+    const secondGenerated = completeTodoAndMaybeGenerateNext(
+      base,
+      Temporal.Instant.from('2026-02-17T10:00:00Z'),
+      Temporal.PlainDate.from('2026-02-17'),
+      () => 'next-2'
+    )
+    expect(secondGenerated).toBeUndefined()
+  })
+
+  it('uses dueDate as recurrence base date when provided', () => {
+    const base: Todo = {
+      id: 'base',
+      title: 'task',
+      completed: false,
+      createdAt: Temporal.Instant.from('2026-02-10T00:00:00Z'),
+      dueDate: Temporal.PlainDate.from('2026-02-20'),
+      recurrence: { type: 'weekly', weekdays: [1] }, // Mon
+      hasGeneratedNextOccurrence: false
+    }
+
+    const generated = completeTodoAndMaybeGenerateNext(
+      base,
+      Temporal.Instant.from('2026-02-16T10:00:00Z'),
+      base.dueDate,
+      () => 'next-due'
+    )
+    expect(generated?.dueDate?.toString()).toBe('2026-02-23')
+  })
+
+  it('uses createdAt as recurrence base date when dueDate is missing', () => {
+    const base: Todo = {
+      id: 'base',
+      title: 'task',
+      completed: false,
+      createdAt: Temporal.Instant.from('2026-02-10T00:00:00Z'),
+      recurrence: { type: 'weekly', weekdays: [1] }, // Mon
+      hasGeneratedNextOccurrence: false
+    }
+
+    const baseDate = base.createdAt.toZonedDateTimeISO('UTC').toPlainDate()
+    const generated = completeTodoAndMaybeGenerateNext(
+      base,
+      Temporal.Instant.from('2026-02-16T10:00:00Z'),
+      baseDate,
+      () => 'next-created'
+    )
+    expect(generated?.dueDate?.toString()).toBe('2026-02-16')
+  })
+})
+
 describe('formatCountLabel', () => {
   it('formats label with count', () => {
     expect(formatCountLabel('未完了', 0)).toBe('未完了（0）')
@@ -184,7 +315,7 @@ describe('getTodayTodosForMenu', () => {
 })
 
 describe('buildTodayTasksPayload', () => {
-  it('builds payload with due dates and all today todos', () => {
+  it('builds payload with due dates, recurrence flags and all today todos', () => {
     const today = plainDate('2026-02-16')
     const todos: Todo[] = [
       {
@@ -193,7 +324,8 @@ describe('buildTodayTasksPayload', () => {
         completed: false,
         createdAt: instant(1),
         dueDate: plainDate('2026-02-16'),
-        isToday: true
+        isToday: true,
+        recurrence: { type: 'weekly', weekdays: [1, 3] }
       },
       {
         id: '2',
@@ -209,8 +341,20 @@ describe('buildTodayTasksPayload', () => {
 
     expect(payload.count).toBe(2)
     expect(payload.items).toEqual([
-      { id: '1', title: 'buy', completed: false, dueDateIso: '2026-02-16' },
-      { id: '2', title: 'done', completed: true, dueDateIso: '2026-02-17' }
+      {
+        id: '1',
+        title: 'buy',
+        completed: false,
+        dueDateIso: '2026-02-16',
+        hasRecurrence: true
+      },
+      {
+        id: '2',
+        title: 'done',
+        completed: true,
+        dueDateIso: '2026-02-17',
+        hasRecurrence: false
+      }
     ])
     expect(typeof payload.updatedAt).toBe('string')
   })
@@ -283,6 +427,21 @@ describe('app', () => {
     expect(body).toContain('✅ 完了:')
   })
 
+  it('shows createdAt in the same format as completedAt in details', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const selectedMatch = listBody.match(/selected=([^"&]+)/)
+    expect(selectedMatch).not.toBeNull()
+    const selectedId = selectedMatch?.[1] ?? ''
+
+    const res = await app.request(`http://localhost/?selected=${selectedId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toMatch(
+      /作成:\s*(昨日|今日|明日|\d{1,2}\/\d{1,2}|\d{4}\/\d{1,2}\/\d{1,2}) \d{2}:\d{2}/
+    )
+  })
+
   it('shows delete confirmation on detail delete button', async () => {
     const listRes = await app.request('http://localhost/')
     const listBody = await listRes.text()
@@ -295,4 +454,32 @@ describe('app', () => {
     const body = await res.text()
     expect(body).toContain('return confirm(&#39;このタスクを削除しますか？&#39;)')
   })
+
+  it('shows recurrence status badge when recurrence is set', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const selectedMatch = listBody.match(/selected=([^"&]+)/)
+    expect(selectedMatch).not.toBeNull()
+    const selectedId = selectedMatch?.[1] ?? ''
+
+    const form = new URLSearchParams({
+      recurrenceType: 'weekly',
+      weeklyWeekdays: '1'
+    })
+    const recurrenceRes = await app.request(
+      `http://localhost/todos/${selectedId}/recurrence?selected=${selectedId}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form.toString()
+      }
+    )
+    expect([200, 302]).toContain(recurrenceRes.status)
+
+    const res = await app.request(`http://localhost/?selected=${selectedId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('🔄 繰り返し')
+  })
+
 })

@@ -6,6 +6,7 @@ export type TodayTaskItem = {
   title: string
   completed: boolean
   dueDateIso?: string
+  hasRecurrence?: boolean
 }
 
 export type TodayTasksPayload = {
@@ -29,6 +30,18 @@ export const buildTrayMenuModel = (
   payload: TodayTasksPayload | undefined,
   options: { error?: boolean; today?: Temporal.PlainDate } = {}
 ): TrayMenuModelEntry[] => {
+  const buildTaskSublabel = (todo: TodayTaskItem) => {
+    const parts: string[] = []
+    const dueLabel = formatDueDateIsoForMenu(todo.dueDateIso, options.today)
+    if (dueLabel) {
+      parts.push(dueLabel)
+    }
+    if (todo.hasRecurrence) {
+      parts.push('🔄 繰り返し')
+    }
+    return parts.join('  ') || undefined
+  }
+
   if (options.error) {
     return [
       { kind: 'error', label: '取得失敗' },
@@ -62,7 +75,7 @@ export const buildTrayMenuModel = (
               todoId: todo.id,
               label: todo.title,
               completed: todo.completed,
-              sublabel: formatDueDateIsoForMenu(todo.dueDateIso, options.today)
+              sublabel: buildTaskSublabel(todo)
             }) satisfies TrayMenuModelEntry
         )
 

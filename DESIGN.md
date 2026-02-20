@@ -38,6 +38,63 @@
 - 各行に「完了/未完了」「削除」ボタン
 - 削除操作は確認ダイアログ経由で確定する（詳細内の削除ボタン）。
 
+## 繰り返しタスク設計（週次/月次）
+
+### 目的
+- 繰り返し設定はタスク完了時に次回タスクを1件生成する。
+- バックグラウンド定期実行（cron）には依存しない。
+
+### データモデル
+- `Todo` に `recurrence` を追加する。
+- `recurrence` は以下の排他ユニオン:
+1. `none`
+2. `weekly { weekdays: number[] }`  
+: `weekdays` は 0-6（日-土）で複数保持。
+3. `monthly { dayOfMonth: number }`  
+: `dayOfMonth` は 1-31 の単一値。
+- 生成重複防止のため `hasGeneratedNextOccurrence: boolean` を保持する（初期値 `false`）。
+
+### 完了時フロー
+1. タスクを `completed=true` にする。
+2. `completedAt` を現在時刻に設定する。
+3. `recurrence` が `none` 以外なら次回期日を計算する。
+4. `hasGeneratedNextOccurrence === false` の場合のみ次回タスクを1件生成する。
+5. 生成後に `hasGeneratedNextOccurrence=true` を記録する。
+
+### 再オープン時の扱い
+- 未完了へ戻す操作は `completed=false` / `completedAt=undefined` とする。
+- 再完了時は新しい `completedAt` が付与されるが、`hasGeneratedNextOccurrence=true` により次回タスクは再生成しない。
+
+### 次回期日計算
+- 週次:
+1. 基準日は完了日時のローカル日付。
+2. 設定曜日のうち、基準日より後で最も近い日を採用。
+3. 当日曜日を含める場合は「次回=1週間後同曜日」として扱い、同日重複を避ける。
+- 月次:
+1. 基準日は完了日時のローカル日付。
+2. 次回対象月の `dayOfMonth` を試みる。
+3. 存在しない日付は当該月末へ繰り下げる（例: 31日設定で4月は30日）。
+
+### 生成タスクの初期値
+- 引き継ぐ: `title` / `memo` / `recurrence`
+- リセット/設定:
+1. `completed=false`
+2. `isToday=false`
+3. `createdAt=now`
+4. `completedAt=undefined`
+5. `dueDate=次回期日`
+
+### バリデーション
+- `weekly` は曜日1件以上必須。
+- `monthly` は `dayOfMonth` を1-31で制限。
+- `weekly` と `monthly` の同時入力は受け付けない。
+
+### テスト観点（TDD）
+1. 週次の複数曜日から次回日を正しく選ぶ。
+2. 月次の月末繰り下げ（29/30/31）を検証する。
+3. 完了時に1件だけ生成される。
+4. 再オープン→再完了で同一完了イベントの重複生成が起きない。
+
 ## Macメニューバー表示の設計
 要件「Macのメニューバーに今日のタスクを表示できる」を、既存構成へ最小差分で追加する。
 

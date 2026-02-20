@@ -263,7 +263,9 @@ app.get('/', zValidator('query', querySchema), (c) => {
         action={buildPathWithQuery(`/todos/${todo.id}/delete`, c.req.url, sharedQuery)}
         className="inline"
       >
-        <button type="submit">削除</button>
+        <button type="submit" onclick="return confirm('このタスクを削除しますか？')">
+          削除
+        </button>
       </form>
       <div>
         <p>メモ:</p>

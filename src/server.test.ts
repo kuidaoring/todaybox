@@ -282,4 +282,17 @@ describe('app', () => {
     const body = await res.text()
     expect(body).toContain('✅ 完了:')
   })
+
+  it('shows delete confirmation on detail delete button', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const selectedMatch = listBody.match(/selected=([^"&]+)/)
+    expect(selectedMatch).not.toBeNull()
+    const selectedId = selectedMatch?.[1] ?? ''
+
+    const res = await app.request(`http://localhost/?selected=${selectedId}`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('return confirm(&#39;このタスクを削除しますか？&#39;)')
+  })
 })

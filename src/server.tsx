@@ -4,7 +4,7 @@ import { jsxRenderer } from 'hono/jsx-renderer'
 import { zValidator } from '@hono/zod-validator'
 import { Temporal } from '@js-temporal/polyfill'
 import { createTodoFormSchema, dueDateFormSchema, querySchema } from './validation.js'
-import { formatDueDateLabel } from './date-format.js'
+import { formatCompletedAtLabel, formatDueDateLabel } from './date-format.js'
 
 export const app = new Hono()
 
@@ -13,6 +13,7 @@ export type Todo = {
   title: string
   completed: boolean
   createdAt: Temporal.Instant
+  completedAt?: Temporal.Instant
   dueDate?: Temporal.PlainDate
   isToday?: boolean
   memo?: string
@@ -33,6 +34,15 @@ export type TodayTasksPayload = {
 
 const todos: Todo[] = []
 const now = Temporal.Now.instant()
+const localTimeZone = Temporal.Now.timeZoneId()
+const localToday = Temporal.Now.zonedDateTimeISO(localTimeZone).toPlainDate()
+const toLocalNoonInstant = (date: Temporal.PlainDate) =>
+  date
+    .toZonedDateTime({
+      timeZone: localTimeZone,
+      plainTime: Temporal.PlainTime.from('12:00')
+    })
+    .toInstant()
 const toUtcPlainDate = (value: Temporal.Instant) => value.toZonedDateTimeISO('UTC').toPlainDate()
 const formatPlainDateInput = (value: Temporal.PlainDate | undefined) => value?.toString() ?? ''
 const formatInstantLabel = (value: Temporal.Instant) =>
@@ -100,6 +110,7 @@ todos.push(
     title: 'ジムに行く',
     completed: true,
     createdAt: now.subtract({ hours: 12 }),
+    completedAt: toLocalNoonInstant(localToday.subtract({ days: 3 })),
     dueDate: toUtcPlainDate(now.subtract({ hours: 24 })),
     isToday: false
   },
@@ -115,6 +126,7 @@ todos.push(
     title: '部屋を片付ける',
     completed: true,
     createdAt: now.subtract({ hours: 72 }),
+    completedAt: toLocalNoonInstant(localToday.subtract({ days: 1 })),
     isToday: false
   }
 )
@@ -139,6 +151,21 @@ export const sortTodos = (items: Todo[], sort: 'created' | 'due') => {
       return toDueTimestamp(a.dueDate) - toDueTimestamp(b.dueDate)
     }
     return Temporal.Instant.compare(a.createdAt, b.createdAt)
+  })
+}
+
+export const sortCompletedTodosByRecent = (items: Todo[]) => {
+  return [...items].sort((a, b) => {
+    if (!a.completedAt && !b.completedAt) {
+      return Temporal.Instant.compare(a.createdAt, b.createdAt)
+    }
+    if (!a.completedAt) {
+      return 1
+    }
+    if (!b.completedAt) {
+      return -1
+    }
+    return Temporal.Instant.compare(b.completedAt, a.completedAt)
   })
 }
 
@@ -198,10 +225,10 @@ app.get(
 app.get('/', zValidator('query', querySchema), (c) => {
   const { filter, selected, sort } = c.req.valid('query')
   const sharedQuery = { filter, selected, sort }
-  const sorted = sortTodos(todos, sort)
-  const filtered = filterTodosByToday(sorted, filter)
-  const { incomplete: incompleteTodos, completed: completedTodos } =
-    splitTodosByCompletion(filtered)
+  const filtered = filterTodosByToday(todos, filter)
+  const { incomplete, completed } = splitTodosByCompletion(filtered)
+  const incompleteTodos = sortTodos(incomplete, sort)
+  const completedTodos = sortCompletedTodosByRecent(completed)
   const shouldOpenCompletedSection = completedTodos.some((todo) => todo.id === selected)
   const renderInlineDetails = (todo: Todo) => (
     <div className="ml-7 space-y-1 rounded border border-zinc-300 p-3 text-sm">
@@ -242,6 +269,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
         <p>メモ:</p>
         <pre className="whitespace-pre-wrap">{todo.memo || 'なし'}</pre>
       </div>
+      {todo.completedAt ? <p>完了: {formatCompletedAtLabel(todo.completedAt)}</p> : null}
       <p>作成: {formatInstantLabel(todo.createdAt)}</p>
     </div>
   )
@@ -367,6 +395,9 @@ app.get('/', zValidator('query', querySchema), (c) => {
                           {todo.memo ? (
                             <small className="text-xs">📝 メモ</small>
                           ) : null}
+                          {todo.completedAt ? (
+                            <small className="text-xs">✅ 完了: {formatCompletedAtLabel(todo.completedAt)}</small>
+                          ) : null}
                           <form
                             method="post"
                             action={buildPathWithQuery(
@@ -450,6 +481,9 @@ app.get('/', zValidator('query', querySchema), (c) => {
                           {todo.memo ? (
                             <small className="text-xs">📝 メモ</small>
                           ) : null}
+                          {todo.completedAt ? (
+                            <small className="text-xs">✅ 完了: {formatCompletedAtLabel(todo.completedAt)}</small>
+                          ) : null}
                           <form
                             method="post"
                             action={buildPathWithQuery(
@@ -518,6 +552,7 @@ app.post('/todos/:id/toggle', zValidator('query', querySchema), (c) => {
   const todo = todos.find((t) => t.id === id)
   if (todo) {
     todo.completed = !todo.completed
+    todo.completedAt = todo.completed ? Temporal.Now.instant() : undefined
     notifyTodosChanged()
   }
   return c.redirect(buildPathWithQuery('/', c.req.url, { filter, selected, sort }))

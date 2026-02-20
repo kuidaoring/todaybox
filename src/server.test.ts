@@ -7,6 +7,7 @@ import {
   formatCountLabel,
   filterTodosByToday,
   getTodayTodosForMenu,
+  sortCompletedTodosByRecent,
   sortTodos,
   splitTodosByCompletion,
   toDueTimestamp,
@@ -86,6 +87,36 @@ describe('sortTodos', () => {
   })
 })
 
+describe('sortCompletedTodosByRecent', () => {
+  it('sorts completed todos by completedAt desc and keeps missing completedAt at end', () => {
+    const items: Todo[] = [
+      {
+        id: '1',
+        title: 'a',
+        completed: true,
+        createdAt: instant(1),
+        completedAt: instant(1000)
+      },
+      {
+        id: '2',
+        title: 'b',
+        completed: true,
+        createdAt: instant(2),
+        completedAt: instant(3000)
+      },
+      {
+        id: '3',
+        title: 'c',
+        completed: true,
+        createdAt: instant(3)
+      }
+    ]
+
+    const result = sortCompletedTodosByRecent(items)
+    expect(result.map((todo) => todo.id)).toEqual(['2', '1', '3'])
+  })
+})
+
 describe('formatCountLabel', () => {
   it('formats label with count', () => {
     expect(formatCountLabel('未完了', 0)).toBe('未完了（0）')
@@ -95,6 +126,10 @@ describe('formatCountLabel', () => {
 
 describe('formatDueDateLabel', () => {
   const today = plainDate('2026-02-11')
+
+  it('returns 昨日 when due date is yesterday', () => {
+    expect(formatDueDateLabel(plainDate('2026-02-10'), today)).toBe('昨日')
+  })
 
   it('returns 今日 when due date is today', () => {
     expect(formatDueDateLabel(plainDate('2026-02-11'), today)).toBe('今日')
@@ -239,5 +274,12 @@ describe('app', () => {
     expect(res.status).toBe(200)
     const body = await res.text()
     expect(body).not.toMatch(/<details class="space-y-2" open(?:="")?>/)
+  })
+
+  it('shows completedAt label for completed todo rows', async () => {
+    const res = await app.request('http://localhost/')
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('✅ 完了:')
   })
 })

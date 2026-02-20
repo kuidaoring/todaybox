@@ -4,6 +4,9 @@ export const formatDueDateLabel = (
   value: Temporal.PlainDate,
   today: Temporal.PlainDate = Temporal.Now.plainDateISO()
 ) => {
+  if (Temporal.PlainDate.compare(value, today.subtract({ days: 1 })) === 0) {
+    return '昨日'
+  }
   if (Temporal.PlainDate.compare(value, today) === 0) {
     return '今日'
   }
@@ -29,4 +32,17 @@ export const formatDueDateIsoForMenu = (
   } catch {
     return undefined
   }
+}
+
+export const formatCompletedAtLabel = (
+  value: Temporal.Instant,
+  options: { today?: Temporal.PlainDate; timeZone?: string } = {}
+) => {
+  const timeZone = options.timeZone ?? Temporal.Now.timeZoneId()
+  const zonedDateTime = value.toZonedDateTimeISO(timeZone)
+  const today = options.today ?? Temporal.Now.zonedDateTimeISO(timeZone).toPlainDate()
+  const dateLabel = formatDueDateLabel(zonedDateTime.toPlainDate(), today)
+  const hour = String(zonedDateTime.hour).padStart(2, '0')
+  const minute = String(zonedDateTime.minute).padStart(2, '0')
+  return `${dateLabel} ${hour}:${minute}`
 }

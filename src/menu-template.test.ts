@@ -3,7 +3,7 @@ import { createMenuTemplate } from './menu-template.js'
 import type { TrayMenuModelEntry } from './tray-menu.js'
 
 describe('createMenuTemplate', () => {
-  it('maps task to checkbox item with checked and sublabel', () => {
+  it('maps task to normal menu item with sublabel', () => {
     const onOpen = vi.fn()
     const onRefresh = vi.fn()
     const onQuit = vi.fn()
@@ -14,8 +14,6 @@ describe('createMenuTemplate', () => {
     const template = createMenuTemplate(model, { onOpen, onRefresh, onQuit })
     expect(template).toHaveLength(1)
     expect(template[0]).toMatchObject({
-      type: 'checkbox',
-      checked: true,
       label: 'task',
       sublabel: '📅 今日'
     })

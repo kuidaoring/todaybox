@@ -31,6 +31,7 @@ export type TodayTaskItem = {
   completed: boolean
   dueDateIso?: string
   hasRecurrence: boolean
+  recurrenceLabel?: string
 }
 
 export type TodayTasksPayload = {
@@ -70,6 +71,26 @@ const recurrenceWeekdayLabels = [
   { value: 5, label: '金' },
   { value: 6, label: '土' }
 ] as const
+const recurrenceWeekdayLabelMap = new Map<number, string>(
+  recurrenceWeekdayLabels.map((item) => [item.value, item.label])
+)
+
+export const formatRecurrenceLabel = (recurrence: RecurrenceSetting | undefined) => {
+  if (!recurrence) {
+    return undefined
+  }
+  if (recurrence.type === 'monthly') {
+    return `${recurrence.dayOfMonth}日`
+  }
+  const labels = [...new Set(recurrence.weekdays)]
+    .sort((a, b) => a - b)
+    .map((weekday) => recurrenceWeekdayLabelMap.get(weekday))
+    .filter((label): label is string => Boolean(label))
+  if (labels.length === 0) {
+    return undefined
+  }
+  return labels.join(',')
+}
 
 export const buildRecurrenceSetting = (
   form: {
@@ -192,7 +213,8 @@ export const buildTodayTasksPayload = (
       title: todo.title,
       completed: todo.completed,
       dueDateIso: todo.dueDate?.toString(),
-      hasRecurrence: Boolean(todo.recurrence)
+      hasRecurrence: Boolean(todo.recurrence),
+      recurrenceLabel: formatRecurrenceLabel(todo.recurrence)
     })),
     updatedAt: new Date().toISOString()
   }
@@ -335,24 +357,99 @@ app.get(
 
 app.get('/', zValidator('query', querySchema), (c) => {
   const { filter, selected, sort } = c.req.valid('query')
-  const sharedQuery = { filter, selected, sort }
   const filtered = filterTodosByToday(todos, filter)
   const { incomplete, completed } = splitTodosByCompletion(filtered)
   const incompleteTodos = sortTodos(incomplete, sort)
   const completedTodos = sortCompletedTodosByRecent(completed)
-  const shouldOpenCompletedSection = completedTodos.some((todo) => todo.id === selected)
-  const renderInlineDetails = (todo: Todo) => (
-    <div className="ml-7 space-y-1 rounded border border-zinc-300 p-3 text-sm">
-      <div className="flex justify-end">
-        <a href={buildPathWithQuery('/', c.req.url, { filter, selected: '', sort })} className="text-sm">
-          閉じる
-        </a>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span>締切:</span>
-        <form
-          method="post"
-          action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, sharedQuery)}
+  const renderTodoRow = (todo: Todo) => (
+    <li className="text-sm">
+      <details
+        className="space-y-2 rounded border border-zinc-300 p-2"
+        name="todo-item"
+        open={todo.id === selected ? true : undefined}
+      >
+        <summary className="flex cursor-pointer flex-wrap items-center gap-2">
+          <form
+            method="post"
+            action={buildPathWithQuery(`/todos/${todo.id}/toggle`, c.req.url, {
+              filter,
+              selected,
+              sort
+            })}
+            className="inline"
+            onclick="event.stopPropagation()"
+          >
+            <button
+              type="submit"
+              aria-label={todo.completed ? '未完了に戻す' : '完了にする'}
+              aria-pressed={todo.completed ? 'true' : 'false'}
+              className={[
+                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                todo.completed
+                  ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500'
+                  : 'border-zinc-400 bg-white text-transparent hover:border-zinc-500'
+              ].join(' ')}
+              onclick="event.stopPropagation()"
+            >
+              ✓
+            </button>
+          </form>
+          <form
+            method="post"
+            action={buildPathWithQuery(`/todos/${todo.id}/today`, c.req.url, {
+              filter,
+              selected,
+              sort
+            })}
+            className="inline"
+            onclick="event.stopPropagation()"
+          >
+            <button
+              type="submit"
+              aria-label={todo.isToday ? '今日解除' : '今日にする'}
+              aria-pressed={todo.isToday ? 'true' : 'false'}
+              className={[
+                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                todo.isToday
+                  ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
+                  : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
+              ].join(' ')}
+              onclick="event.stopPropagation()"
+            >
+              📍
+            </button>
+          </form>
+          <a
+            href={buildPathWithQuery('/', c.req.url, {
+              filter,
+              selected: todo.id,
+              sort
+            })}
+          >
+            <span className={todo.completed ? 'line-through' : ''}>{todo.title}</span>
+          </a>
+          {todo.dueDate ? <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small> : null}
+          {todo.recurrence ? (
+            <small className="text-xs">🔄 {formatRecurrenceLabel(todo.recurrence)}</small>
+          ) : null}
+          {todo.memo ? <small className="text-xs">📝 メモ</small> : null}
+          {todo.completedAt ? (
+            <small className="text-xs">✅ 完了: {formatCompletedAtLabel(todo.completedAt)}</small>
+          ) : null}
+        </summary>
+        {renderInlineDetails(todo)}
+      </details>
+    </li>
+  )
+  const renderInlineDetails = (todo: Todo) => {
+    const detailQuery = { filter, selected: todo.id, sort }
+    return (
+      <div className="space-y-3 p-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span>締切:</span>
+          <form
+            method="post"
+          action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, detailQuery)}
           className="inline-flex items-center gap-2"
         >
           <input type="date" name="dueDate" value={formatPlainDateInput(todo.dueDate)} />
@@ -361,7 +458,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
         {todo.dueDate ? (
           <form
             method="post"
-            action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, sharedQuery)}
+            action={buildPathWithQuery(`/todos/${todo.id}/due`, c.req.url, detailQuery)}
             className="inline"
           >
             <input type="hidden" name="dueDate" value="" />
@@ -371,60 +468,58 @@ app.get('/', zValidator('query', querySchema), (c) => {
       </div>
       <form
         method="post"
-        action={buildPathWithQuery(`/todos/${todo.id}/recurrence`, c.req.url, sharedQuery)}
+        action={buildPathWithQuery(`/todos/${todo.id}/recurrence`, c.req.url, detailQuery)}
         className="space-y-2"
       >
-        <fieldset className="flex flex-col gap-2 border border-zinc-300 p-2">
+        <fieldset className="flex flex-col gap-3 border border-zinc-300 p-2">
           <legend>繰り返し設定</legend>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex items-center gap-1">
-              <input
-                type="radio"
-                name="recurrenceType"
-                value="none"
-                checked={todo.recurrence ? undefined : true}
-              />
-              なし
-            </label>
-            <label className="inline-flex items-center gap-1">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="radio"
+              name="recurrenceType"
+              value="none"
+              checked={todo.recurrence ? undefined : true}
+            />
+            <span>繰り返しなし</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2">
               <input
                 type="radio"
                 name="recurrenceType"
                 value="weekly"
                 checked={todo.recurrence?.type === 'weekly' ? true : undefined}
               />
-              週次
+              <span>週次</span>
             </label>
-            <label className="inline-flex items-center gap-1">
+            <div className="flex flex-wrap items-center gap-3">
+              {recurrenceWeekdayLabels.map((day) => (
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    name="weeklyWeekdays"
+                    value={String(day.value)}
+                    checked={
+                      todo.recurrence?.type === 'weekly' && todo.recurrence.weekdays.includes(day.value)
+                        ? true
+                        : undefined
+                    }
+                  />
+                  {day.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2">
               <input
                 type="radio"
                 name="recurrenceType"
                 value="monthly"
                 checked={todo.recurrence?.type === 'monthly' ? true : undefined}
               />
-              月次
+              <span>月次</span>
             </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span>週次曜日:</span>
-            {recurrenceWeekdayLabels.map((day) => (
-              <label className="inline-flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  name="weeklyWeekdays"
-                  value={String(day.value)}
-                  checked={
-                    todo.recurrence?.type === 'weekly' && todo.recurrence.weekdays.includes(day.value)
-                      ? true
-                      : undefined
-                  }
-                />
-                {day.label}
-              </label>
-            ))}
-          </div>
-          <label className="inline-flex items-center gap-2">
-            <span>月次日付:</span>
             <select name="monthlyDay" className="w-24">
               <option value="">未設定</option>
               {Array.from({ length: 31 }, (_, index) => {
@@ -439,18 +534,11 @@ app.get('/', zValidator('query', querySchema), (c) => {
                 )
               })}
             </select>
-          </label>
+          </div>
+          <div>
+            <button type="submit">設定</button>
+          </div>
         </fieldset>
-        <button type="submit">繰り返しを更新</button>
-      </form>
-      <form
-        method="post"
-        action={buildPathWithQuery(`/todos/${todo.id}/delete`, c.req.url, sharedQuery)}
-        className="inline"
-      >
-        <button type="submit" onclick="return confirm('このタスクを削除しますか？')">
-          削除
-        </button>
       </form>
       <div>
         <p>メモ:</p>
@@ -458,8 +546,20 @@ app.get('/', zValidator('query', querySchema), (c) => {
       </div>
       {todo.completedAt ? <p>完了: {formatCompletedAtLabel(todo.completedAt)}</p> : null}
       <p>作成: {formatCompletedAtLabel(todo.createdAt)}</p>
-    </div>
-  )
+      <div className="border-t border-zinc-300 pt-3">
+        <form
+          method="post"
+          action={buildPathWithQuery(`/todos/${todo.id}/delete`, c.req.url, detailQuery)}
+          className="inline"
+        >
+          <button type="submit" onclick="return confirm('このタスクを削除しますか？')">
+            削除
+          </button>
+        </form>
+      </div>
+      </div>
+    )
+  }
   return c.render(
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-8">
       <header className="space-y-2">
@@ -482,22 +582,6 @@ app.get('/', zValidator('query', querySchema), (c) => {
         >
           今日のタスク
         </a>
-        <form method="get" action="/" className="flex items-center gap-2">
-          <input type="hidden" name="filter" value={filter} />
-          {selected ? <input type="hidden" name="selected" value={selected} /> : null}
-          <label className="flex items-center gap-2">
-            <span>並び替え</span>
-            <select name="sort" className="text-sm">
-              <option value="created" selected={sort === 'created'}>
-                作成順
-              </option>
-              <option value="due" selected={sort === 'due'}>
-                期限順
-              </option>
-            </select>
-          </label>
-          <button type="submit">適用</button>
-        </form>
       </nav>
       <form method="post" action="/todos" className="flex flex-wrap items-center gap-3 text-sm">
         <input
@@ -528,33 +612,31 @@ app.get('/', zValidator('query', querySchema), (c) => {
           <span>メモ</span>
           <textarea name="memo" rows={3} placeholder="補足メモ" className="w-full"></textarea>
         </label>
-        <fieldset className="flex w-full flex-col gap-2 border border-zinc-300 p-3">
+        <fieldset className="flex w-full flex-col gap-3 border border-zinc-300 p-3">
           <legend>繰り返し</legend>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex items-center gap-1">
-              <input type="radio" name="recurrenceType" value="none" checked />
-              なし
-            </label>
-            <label className="inline-flex items-center gap-1">
-              <input type="radio" name="recurrenceType" value="weekly" />
-              週次
-            </label>
-            <label className="inline-flex items-center gap-1">
-              <input type="radio" name="recurrenceType" value="monthly" />
-              月次
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span>週次曜日:</span>
-            {recurrenceWeekdayLabels.map((day) => (
-              <label className="inline-flex items-center gap-1">
-                <input type="checkbox" name="weeklyWeekdays" value={String(day.value)} />
-                {day.label}
-              </label>
-            ))}
-          </div>
           <label className="inline-flex items-center gap-2">
-            <span>月次日付:</span>
+            <input type="radio" name="recurrenceType" value="none" checked />
+            <span>繰り返しなし</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2">
+              <input type="radio" name="recurrenceType" value="weekly" />
+              <span>週次</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              {recurrenceWeekdayLabels.map((day) => (
+                <label className="inline-flex items-center gap-1">
+                  <input type="checkbox" name="weeklyWeekdays" value={String(day.value)} />
+                  {day.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2">
+              <input type="radio" name="recurrenceType" value="monthly" />
+              <span>月次</span>
+            </label>
             <select name="monthlyDay" className="w-24">
               <option value="">未設定</option>
               {Array.from({ length: 31 }, (_, index) => {
@@ -562,7 +644,7 @@ app.get('/', zValidator('query', querySchema), (c) => {
                 return <option value={String(day)}>{day}日</option>
               })}
             </select>
-          </label>
+          </div>
           <p className="text-xs text-zinc-600">
             週次と月次は排他です。完了時に次回タスクを1件生成します。
           </p>
@@ -574,176 +656,40 @@ app.get('/', zValidator('query', querySchema), (c) => {
       </form>
       <div className="grid gap-6">
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">一覧</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">一覧</h2>
+            <form method="get" action="/" className="flex items-center gap-2 text-sm">
+              <input type="hidden" name="filter" value={filter} />
+              {selected ? <input type="hidden" name="selected" value={selected} /> : null}
+              <label className="flex items-center gap-2">
+                <span>並び替え</span>
+                <select name="sort" className="text-sm">
+                  <option value="created" selected={sort === 'created'}>
+                    作成順
+                  </option>
+                  <option value="due" selected={sort === 'due'}>
+                    期限順
+                  </option>
+                </select>
+              </label>
+              <button type="submit">適用</button>
+            </form>
+          </div>
           {filtered.length ? (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-base font-semibold">
-                  {formatCountLabel('未完了', incompleteTodos.length)}
-                </h3>
-                {incompleteTodos.length ? (
+              {incompleteTodos.length ? (
+                <ul className="space-y-2">
+                  {incompleteTodos.map((todo) => renderTodoRow(todo))}
+                </ul>
+              ) : null}
+              {completedTodos.length ? (
+                <div className="space-y-2">
+                  <h3 className="text-base font-semibold">{formatCountLabel('完了', completedTodos.length)}</h3>
                   <ul className="space-y-2">
-                    {incompleteTodos.map((todo) => (
-                      <li className="space-y-2 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <form
-                            method="post"
-                            action={buildPathWithQuery(
-                              `/todos/${todo.id}/toggle`,
-                              c.req.url,
-                              sharedQuery
-                            )}
-                            className="inline"
-                          >
-                            <button
-                              type="submit"
-                              aria-label="完了にする"
-                              aria-pressed="false"
-                              className="inline-flex h-5 w-5 items-center justify-center rounded border border-zinc-400 bg-white text-transparent text-[11px] leading-none transition-colors hover:border-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-                            >
-                              ✓
-                            </button>
-                          </form>
-                          <a
-                            href={buildPathWithQuery('/', c.req.url, {
-                              filter,
-                              selected: todo.id,
-                              sort
-                            })}
-                          >
-                            <span className={todo.id === selected ? 'font-bold' : ''}>
-                              {todo.title}
-                            </span>
-                          </a>
-                          {todo.dueDate ? (
-                            <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
-                          ) : null}
-                          {todo.recurrence ? <small className="text-xs">🔄 繰り返し</small> : null}
-                          {todo.memo ? (
-                            <small className="text-xs">📝 メモ</small>
-                          ) : null}
-                          {todo.completedAt ? (
-                            <small className="text-xs">✅ 完了: {formatCompletedAtLabel(todo.completedAt)}</small>
-                          ) : null}
-                          <form
-                            method="post"
-                            action={buildPathWithQuery(
-                              `/todos/${todo.id}/today`,
-                              c.req.url,
-                              sharedQuery
-                            )}
-                            className="inline"
-                          >
-                            <button
-                              type="submit"
-                              aria-label={todo.isToday ? '今日解除' : '今日にする'}
-                              aria-pressed={todo.isToday ? 'true' : 'false'}
-                              className={[
-                                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                                todo.isToday
-                                  ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
-                                  : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
-                              ].join(' ')}
-                            >
-                              📍
-                            </button>
-                          </form>
-                        </div>
-                        {todo.id === selected ? renderInlineDetails(todo) : null}
-                      </li>
-                    ))}
+                    {completedTodos.map((todo) => renderTodoRow(todo))}
                   </ul>
-                ) : (
-                  <p className="text-sm">未完了のタスクはありません。</p>
-                )}
-              </div>
-              <details className="space-y-2" open={shouldOpenCompletedSection ? true : undefined}>
-                <summary className="cursor-pointer text-base font-semibold">
-                  {formatCountLabel('完了', completedTodos.length)}
-                </summary>
-                {completedTodos.length ? (
-                  <ul className="space-y-2">
-                    {completedTodos.map((todo) => (
-                      <li className="space-y-2 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <form
-                            method="post"
-                            action={buildPathWithQuery(
-                              `/todos/${todo.id}/toggle`,
-                              c.req.url,
-                              sharedQuery
-                            )}
-                            className="inline"
-                          >
-                            <button
-                              type="submit"
-                              aria-label="未完了に戻す"
-                              aria-pressed="true"
-                              className="inline-flex h-5 w-5 items-center justify-center rounded border border-emerald-600 bg-emerald-600 text-white text-[11px] leading-none transition-colors hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-                            >
-                              ✓
-                            </button>
-                          </form>
-                          <a
-                            href={buildPathWithQuery('/', c.req.url, {
-                              filter,
-                              selected: todo.id,
-                              sort
-                            })}
-                          >
-                            <span
-                              className={[
-                                'line-through',
-                                todo.id === selected ? 'font-bold' : ''
-                              ]
-                                .filter(Boolean)
-                                .join(' ')}
-                            >
-                              {todo.title}
-                            </span>
-                          </a>
-                          {todo.dueDate ? (
-                            <small className="text-xs">📅 {formatDueDateLabel(todo.dueDate)}</small>
-                          ) : null}
-                          {todo.recurrence ? <small className="text-xs">🔄 繰り返し</small> : null}
-                          {todo.memo ? (
-                            <small className="text-xs">📝 メモ</small>
-                          ) : null}
-                          {todo.completedAt ? (
-                            <small className="text-xs">✅ 完了: {formatCompletedAtLabel(todo.completedAt)}</small>
-                          ) : null}
-                          <form
-                            method="post"
-                            action={buildPathWithQuery(
-                              `/todos/${todo.id}/today`,
-                              c.req.url,
-                              sharedQuery
-                            )}
-                            className="inline"
-                          >
-                            <button
-                              type="submit"
-                              aria-label={todo.isToday ? '今日解除' : '今日にする'}
-                              aria-pressed={todo.isToday ? 'true' : 'false'}
-                              className={[
-                                'inline-flex h-5 w-5 items-center justify-center rounded border text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                                todo.isToday
-                                  ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-400'
-                                  : 'border-zinc-400 bg-white text-zinc-500 hover:border-zinc-500'
-                              ].join(' ')}
-                            >
-                              📍
-                            </button>
-                          </form>
-                        </div>
-                        {todo.id === selected ? renderInlineDetails(todo) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm">完了したタスクはありません。</p>
-                )}
-              </details>
+                </div>
+              ) : null}
             </div>
           ) : (
             <p className="text-sm">タスクがありません。</p>

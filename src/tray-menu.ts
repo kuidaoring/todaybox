@@ -7,6 +7,7 @@ export type TodayTaskItem = {
   completed: boolean
   dueDateIso?: string
   hasRecurrence?: boolean
+  recurrenceLabel?: string
 }
 
 export type TodayTasksPayload = {
@@ -26,6 +27,9 @@ export type TrayMenuModelEntry =
   | { kind: 'refresh'; label: string }
   | { kind: 'quit'; label: string }
 
+export const toStrikethroughLabel = (label: string) =>
+  [...label].map((char) => `${char}\u0336`).join('')
+
 export const buildTrayMenuModel = (
   payload: TodayTasksPayload | undefined,
   options: { error?: boolean; today?: Temporal.PlainDate } = {}
@@ -36,7 +40,9 @@ export const buildTrayMenuModel = (
     if (dueLabel) {
       parts.push(dueLabel)
     }
-    if (todo.hasRecurrence) {
+    if (todo.recurrenceLabel) {
+      parts.push(`🔄 ${todo.recurrenceLabel}`)
+    } else if (todo.hasRecurrence) {
       parts.push('🔄 繰り返し')
     }
     return parts.join('  ') || undefined
@@ -73,7 +79,7 @@ export const buildTrayMenuModel = (
             ({
               kind: 'task',
               todoId: todo.id,
-              label: todo.title,
+              label: todo.completed ? toStrikethroughLabel(todo.title) : todo.title,
               completed: todo.completed,
               sublabel: buildTaskSublabel(todo)
             }) satisfies TrayMenuModelEntry

@@ -19,8 +19,6 @@ export const createMenuTemplate = (
     }
     if (entry.kind === 'task') {
       template.push({
-        type: 'checkbox',
-        checked: entry.completed,
         label: entry.label,
         sublabel: entry.sublabel,
         click: () => handlers.onOpen(entry.todoId)

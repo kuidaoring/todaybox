@@ -37,7 +37,9 @@ const ensureWindow = () => {
 
 const focusWindowWithSelectedTodo = (todoId?: string) => {
   const win = ensureWindow()
-  const query = todoId ? `?selected=${encodeURIComponent(todoId)}` : ''
+  const query = todoId
+    ? `?filter=today&selected=${encodeURIComponent(todoId)}`
+    : ''
   win.loadURL(`http://localhost:${port}/${query}`)
 }
 

@@ -6,6 +6,7 @@ import {
   buildTodayTasksPayload,
   calculateNextDueDateFromRecurrence,
   completeTodoAndMaybeGenerateNext,
+  formatRecurrenceLabel,
   formatDueDateLabel,
   formatCountLabel,
   filterTodosByToday,
@@ -149,6 +150,16 @@ describe('buildRecurrenceSetting', () => {
         monthlyDay: undefined
       })
     ).toBeUndefined()
+  })
+})
+
+describe('formatRecurrenceLabel', () => {
+  it('formats weekly recurrence as weekday labels', () => {
+    expect(formatRecurrenceLabel({ type: 'weekly', weekdays: [1, 3] })).toBe('月,水')
+  })
+
+  it('formats monthly recurrence as day number', () => {
+    expect(formatRecurrenceLabel({ type: 'monthly', dayOfMonth: 28 })).toBe('28日')
   })
 })
 
@@ -346,14 +357,16 @@ describe('buildTodayTasksPayload', () => {
         title: 'buy',
         completed: false,
         dueDateIso: '2026-02-16',
-        hasRecurrence: true
+        hasRecurrence: true,
+        recurrenceLabel: '月,水'
       },
       {
         id: '2',
         title: 'done',
         completed: true,
         dueDateIso: '2026-02-17',
-        hasRecurrence: false
+        hasRecurrence: false,
+        recurrenceLabel: undefined
       }
     ])
     expect(typeof payload.updatedAt).toBe('string')
@@ -380,44 +393,29 @@ describe('app', () => {
     expect(Array.isArray(body.items)).toBe(true)
   })
 
-  it('renders selected todo detail inline without right-side detail section', async () => {
+  it('renders incomplete list first and completed section header without folding', async () => {
+    const res = await app.request('http://localhost/')
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('<summary')
+    expect(body).toContain('<details class="space-y-2 rounded border border-zinc-300 p-2" name="todo-item"')
+    expect(body).not.toContain('未完了（')
+    expect(body).toContain('完了（')
+  })
+
+  it('opens selected todo as details row', async () => {
     const listRes = await app.request('http://localhost/')
     const listBody = await listRes.text()
-    const selectedMatch = listBody.match(/selected=([^"&]+)/)
+    const selectedMatch = listBody.match(/href="\/\?selected=([^"&]+)[^"]*"/)
     expect(selectedMatch).not.toBeNull()
     const selectedId = selectedMatch?.[1] ?? ''
 
     const res = await app.request(`http://localhost/?selected=${selectedId}`)
     expect(res.status).toBe(200)
     const body = await res.text()
-    expect(body).toContain('閉じる')
-    expect(body).not.toContain('<h2 class="text-lg font-semibold">詳細</h2>')
-  })
-
-  it('auto-opens completed section when selected todo is completed', async () => {
-    const listRes = await app.request('http://localhost/')
-    const listBody = await listRes.text()
-    const completedSelectedMatch = listBody.match(/selected=([^"&]+)[^"]*">\s*<span class="line-through/)
-    expect(completedSelectedMatch).not.toBeNull()
-    const completedId = completedSelectedMatch?.[1] ?? ''
-
-    const res = await app.request(`http://localhost/?selected=${completedId}`)
-    expect(res.status).toBe(200)
-    const body = await res.text()
-    expect(body).toMatch(/<details class="space-y-2" open(?:="")?>/)
-  })
-
-  it('does not auto-open completed section when selected todo is incomplete', async () => {
-    const listRes = await app.request('http://localhost/')
-    const listBody = await listRes.text()
-    const incompleteSelectedMatch = listBody.match(/selected=([^"&]+)[^"]*"><span class="">/)
-    expect(incompleteSelectedMatch).not.toBeNull()
-    const incompleteId = incompleteSelectedMatch?.[1] ?? ''
-
-    const res = await app.request(`http://localhost/?selected=${incompleteId}`)
-    expect(res.status).toBe(200)
-    const body = await res.text()
-    expect(body).not.toMatch(/<details class="space-y-2" open(?:="")?>/)
+    expect(body).toMatch(
+      /<details class="space-y-2 rounded border border-zinc-300 p-2"(?: name="todo-item")? open(?:="")?>/
+    )
   })
 
   it('shows completedAt label for completed todo rows', async () => {
@@ -479,7 +477,54 @@ describe('app', () => {
     const res = await app.request(`http://localhost/?selected=${selectedId}`)
     expect(res.status).toBe(200)
     const body = await res.text()
-    expect(body).toContain('🔄 繰り返し')
+    expect(body).toContain('🔄 月')
+  })
+
+  it('can toggle completion from summary checkbox-like button without opening details', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const toggleMatch = listBody.match(/\/todos\/([^/"?]+)\/toggle\?[^"]*sort=created/)
+    expect(toggleMatch).not.toBeNull()
+    const todoId = toggleMatch?.[1] ?? ''
+    expect(listBody).toContain('aria-label="完了にする"')
+
+    const toggleRes = await app.request(`http://localhost/todos/${todoId}/toggle?sort=created`, {
+      method: 'POST'
+    })
+    expect([200, 302]).toContain(toggleRes.status)
+
+    const afterRes = await app.request('http://localhost/')
+    expect(afterRes.status).toBe(200)
+    const afterBody = await afterRes.text()
+    expect(afterBody).toContain('✅ 完了:')
+  })
+
+  it('can toggle today flag from summary pin button without opening details', async () => {
+    const listRes = await app.request('http://localhost/')
+    const listBody = await listRes.text()
+    const todayMatch = listBody.match(/action="\/todos\/([^/"?]+)\/today\?sort=created"[^>]*>/)
+    expect(todayMatch).not.toBeNull()
+    const todoId = todayMatch?.[1] ?? ''
+    const targetSectionPattern = new RegExp(
+      `action="/todos/${todoId}/today\\?sort=created"[\\s\\S]*?aria-label="(今日にする|今日解除)"`,
+      'm'
+    )
+    const beforeLabelMatch = listBody.match(targetSectionPattern)
+    expect(beforeLabelMatch).not.toBeNull()
+    const beforeLabel = beforeLabelMatch?.[1]
+    const expectedLabel = beforeLabel === '今日解除' ? '今日にする' : '今日解除'
+
+    const todayRes = await app.request(`http://localhost/todos/${todoId}/today?sort=created`, {
+      method: 'POST'
+    })
+    expect([200, 302]).toContain(todayRes.status)
+
+    const afterRes = await app.request('http://localhost/')
+    expect(afterRes.status).toBe(200)
+    const afterBody = await afterRes.text()
+    expect(afterBody).toMatch(
+      new RegExp(`action="/todos/${todoId}/today\\?sort=created"[\\s\\S]*?aria-label="${expectedLabel}"`, 'm')
+    )
   })
 
 })

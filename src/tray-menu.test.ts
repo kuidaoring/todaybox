@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Temporal } from '@js-temporal/polyfill'
-import { buildTrayMenuModel } from './tray-menu.js'
+import { buildTrayMenuModel, toStrikethroughLabel } from './tray-menu.js'
 
 describe('buildTrayMenuModel', () => {
   it('returns error menu when fetching failed', () => {
@@ -28,7 +28,8 @@ describe('buildTrayMenuModel', () => {
           title: '買い物',
           completed: false,
           dueDateIso: '2026-02-16',
-          hasRecurrence: true
+          hasRecurrence: true,
+          recurrenceLabel: '月,水'
         },
         { id: '2', title: '連絡', completed: true, dueDateIso: '2026-02-17' }
       ],
@@ -41,12 +42,12 @@ describe('buildTrayMenuModel', () => {
         todoId: '1',
         label: '買い物',
         completed: false,
-        sublabel: '📅 今日  🔄 繰り返し'
+        sublabel: '📅 今日  🔄 月,水'
       },
       {
         kind: 'task',
         todoId: '2',
-        label: '連絡',
+        label: toStrikethroughLabel('連絡'),
         completed: true,
         sublabel: '📅 明日'
       }
